@@ -10,6 +10,7 @@ var (
 	MaxQueues  = 10000
 )
 
+// A Dispatcher dispatches tasks to workers.
 type Dispatcher struct {
 	pool    chan *worker
 	queue   chan Tasker
@@ -18,6 +19,7 @@ type Dispatcher struct {
 	quit    chan struct{}
 }
 
+// New creates and initializes a new Dispatcher.
 func New() *Dispatcher {
 	d := &Dispatcher{
 		pool:  make(chan *worker, MaxWorkers),
@@ -37,6 +39,7 @@ func New() *Dispatcher {
 	return d
 }
 
+// Start starts to dispatch tasks.
 func (d *Dispatcher) Start() {
 	for _, w := range d.workers {
 		w.start()
@@ -54,11 +57,13 @@ func (d *Dispatcher) Start() {
 	}()
 }
 
+// Enqueue enqueues a new task to the dispatcher.
 func (d *Dispatcher) Enqueue(t Tasker) {
 	d.wg.Add(1)
 	d.queue <- t
 }
 
+// Wait waits until all tasks are completed.
 func (d *Dispatcher) Wait() {
 	d.wg.Wait()
 }
@@ -84,6 +89,7 @@ func (w *worker) start() {
 	}()
 }
 
+// Task is the interface that wraps the Run method.
 type Tasker interface {
 	Run()
 }
