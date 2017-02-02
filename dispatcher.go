@@ -54,7 +54,7 @@ func (d *Dispatcher) Start() {
 	}()
 }
 
-func (d *Dispatcher) Queue(t Tasker) {
+func (d *Dispatcher) Enqueue(t Tasker) {
 	d.wg.Add(1)
 	d.queue <- t
 }

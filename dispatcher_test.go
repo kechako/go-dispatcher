@@ -70,7 +70,7 @@ func TestDispatcher(t *testing.T) {
 	tasks := make([]*testTasker, MaxQueues)
 	for i := 0; i < MaxQueues; i++ {
 		task := &testTasker{false}
-		d.Queue(task)
+		d.Enqueue(task)
 		tasks[i] = task
 	}
 
