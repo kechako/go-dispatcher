@@ -1,9 +1,18 @@
 package dispatcher
 
-import "testing"
+import (
+	"runtime"
+	"testing"
+)
+
+var (
+	workerCount = 4
+	queueSize   = runtime.NumCPU()
+)
 
 func TestNew(t *testing.T) {
-	d := New()
+
+	d := New(workerCount, queueSize)
 
 	if d == nil {
 		t.Error("New returned nil")
@@ -23,18 +32,18 @@ func TestNew(t *testing.T) {
 	}
 
 	poolCap := cap(d.pool)
-	if poolCap != MaxWorkers {
-		t.Errorf("want %v\ngot %v", MaxWorkers, poolCap)
+	if poolCap != workerCount {
+		t.Errorf("want %v\ngot %v", workerCount, poolCap)
 	}
 
 	queueCap := cap(d.queue)
-	if queueCap != MaxQueues {
-		t.Errorf("want %v\ngot %v", MaxQueues, queueCap)
+	if queueCap != queueSize {
+		t.Errorf("want %v\ngot %v", queueSize, queueCap)
 	}
 
 	workerCnt := len(d.workers)
-	if workerCnt != MaxWorkers {
-		t.Errorf("want %v\ngot %v", MaxWorkers, workerCnt)
+	if workerCnt != workerCount {
+		t.Errorf("want %v\ngot %v", workerCount, workerCnt)
 	}
 
 	for i, w := range d.workers {
@@ -65,10 +74,10 @@ func (t *testTasker) Run() {
 }
 
 func TestDispatcher(t *testing.T) {
-	d := New()
+	d := New(workerCount, queueSize)
 
-	tasks := make([]*testTasker, MaxQueues)
-	for i := 0; i < MaxQueues; i++ {
+	tasks := make([]*testTasker, queueSize)
+	for i := 0; i < queueSize; i++ {
 		task := &testTasker{false}
 		d.Enqueue(task)
 		tasks[i] = task

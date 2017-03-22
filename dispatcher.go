@@ -1,15 +1,7 @@
 package dispatcher
 
 import (
-	"runtime"
 	"sync"
-)
-
-var (
-	// MaxWorkers is the maximum number of workers.
-	MaxWorkers = runtime.NumCPU()
-	// MaxQueues is the maximum number of queues.
-	MaxQueues = 10000
 )
 
 // A Dispatcher dispatches tasks to workers.
@@ -22,10 +14,11 @@ type Dispatcher struct {
 }
 
 // New creates and initializes a new Dispatcher.
-func New() *Dispatcher {
+// The Dispatcher has count Workers and size queue.
+func New(count, size int) *Dispatcher {
 	d := &Dispatcher{
-		pool:  make(chan *worker, MaxWorkers),
-		queue: make(chan Tasker, MaxQueues),
+		pool:  make(chan *worker, count),
+		queue: make(chan Tasker, size),
 		quit:  make(chan struct{}),
 	}
 
