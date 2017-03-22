@@ -95,3 +95,12 @@ func (w *worker) start() {
 type Tasker interface {
 	Run()
 }
+
+// The TaskerFunc type is an adapter to allow the use of ordinary functions as task runners.
+// If f is a function with the appropriate signature, TaskerFunc(f) is a Tasker that calls f.
+type TaskerFunc func()
+
+// Run calls f().
+func (f TaskerFunc) Run() {
+	f()
+}
