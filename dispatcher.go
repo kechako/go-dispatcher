@@ -6,8 +6,10 @@ import (
 )
 
 var (
+	// MaxWorkers is the maximum number of workers.
 	MaxWorkers = runtime.NumCPU()
-	MaxQueues  = 10000
+	// MaxQueues is the maximum number of queues.
+	MaxQueues = 10000
 )
 
 // A Dispatcher dispatches tasks to workers.
@@ -89,7 +91,7 @@ func (w *worker) start() {
 	}()
 }
 
-// Task is the interface that wraps the Run method.
+// Tasker is the interface that wraps the Run method.
 type Tasker interface {
 	Run()
 }
