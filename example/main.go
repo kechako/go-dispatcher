@@ -1,6 +1,7 @@
 package main
 
 import (
+	"runtime"
 	"time"
 
 	dispatcher "github.com/kechako/go-dispatcher"
@@ -15,11 +16,11 @@ func (t *task) Run() {
 }
 
 func main() {
-	d := dispatcher.New()
+	d := dispatcher.New(runtime.NumCPU(), 10000)
 	d.Start()
 
 	for i := 0; i < 100; i++ {
-		d.Queue(new(task))
+		d.Enqueue(new(task))
 	}
 
 	d.Wait()
