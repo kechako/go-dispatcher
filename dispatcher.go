@@ -1,13 +1,26 @@
 package dispatcher
 
 import (
+	"context"
+	"runtime"
 	"sync"
 )
+
+var (
+	DefaultWorkerCount = runtime.NumCPU()
+	DefaultQueueSize   = 10000
+)
+
+type task struct {
+	ctx    context.Context
+	tasker Tasker
+	ch     chan error
+}
 
 // A Dispatcher dispatches tasks to workers.
 type Dispatcher struct {
 	pool    chan *worker
-	queue   chan Tasker
+	queue   chan *task
 	workers []*worker
 	wg      sync.WaitGroup
 	quit    chan struct{}
@@ -16,9 +29,19 @@ type Dispatcher struct {
 // New creates and initializes a new Dispatcher.
 // The Dispatcher has count Workers and size queue.
 func New(count, size int) *Dispatcher {
+	return newDispatcher(count, size)
+}
+
+// NewDefault creates and initializes a new Dispatcher
+// with DefaultWorkerCount and DefaultQueueSize.
+func NewDefault() *Dispatcher {
+	return newDispatcher(DefaultWorkerCount, DefaultQueueSize)
+}
+
+func newDispatcher(count, size int) *Dispatcher {
 	d := &Dispatcher{
 		pool:  make(chan *worker, count),
-		queue: make(chan Tasker, size),
+		queue: make(chan *task, size),
 		quit:  make(chan struct{}),
 	}
 
@@ -26,7 +49,7 @@ func New(count, size int) *Dispatcher {
 	for i := 0; i < len(d.workers); i++ {
 		d.workers[i] = &worker{
 			dispatcher: d,
-			task:       make(chan Tasker),
+			task:       make(chan *task),
 			quit:       make(chan struct{}),
 		}
 	}
@@ -53,9 +76,18 @@ func (d *Dispatcher) Start() {
 }
 
 // Enqueue enqueues a new task to the dispatcher.
-func (d *Dispatcher) Enqueue(t Tasker) {
+func (d *Dispatcher) Enqueue(ctx context.Context, t Tasker) <-chan error {
 	d.wg.Add(1)
-	d.queue <- t
+
+	ch := make(chan error)
+
+	d.queue <- &task{
+		ctx:    ctx,
+		tasker: t,
+		ch:     ch,
+	}
+
+	return ch
 }
 
 // Wait waits until all tasks are completed.
@@ -65,7 +97,7 @@ func (d *Dispatcher) Wait() {
 
 type worker struct {
 	dispatcher *Dispatcher
-	task       chan Tasker
+	task       chan *task
 	quit       chan struct{}
 }
 
@@ -76,7 +108,18 @@ func (w *worker) start() {
 
 			select {
 			case t := <-w.task:
-				t.Run()
+				ch := make(chan error)
+
+				go func() {
+					ch <- t.tasker.Run(t.ctx)
+				}()
+
+				select {
+				case err := <-ch:
+					t.ch <- err
+				case <-t.ctx.Done():
+					t.ch <- t.ctx.Err()
+				}
 
 				w.dispatcher.wg.Done()
 			}
@@ -86,14 +129,14 @@ func (w *worker) start() {
 
 // Tasker is the interface that wraps the Run method.
 type Tasker interface {
-	Run()
+	Run(ctx context.Context) error
 }
 
 // The TaskerFunc type is an adapter to allow the use of ordinary functions as task runners.
 // If f is a function with the appropriate signature, TaskerFunc(f) is a Tasker that calls f.
-type TaskerFunc func()
+type TaskerFunc func(ctx context.Context) error
 
-// Run calls f().
-func (f TaskerFunc) Run() {
-	f()
+// Run calls f(ctx).
+func (f TaskerFunc) Run(ctx context.Context) error {
+	return f(ctx)
 }
