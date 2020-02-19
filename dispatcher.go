@@ -1,3 +1,4 @@
+// Package dispatcher dispatches tasks.
 package dispatcher
 
 import (
@@ -7,124 +8,84 @@ import (
 )
 
 var (
+	// DefaultWorkerCount is a default count of workers.
 	DefaultWorkerCount = runtime.NumCPU()
-	DefaultQueueSize   = 10000
+
+	// DefaultQueueSize is a default size of task queue.
+	DefaultQueueSize = 1024
 )
 
-type task struct {
-	ctx    context.Context
-	tasker Tasker
-	ch     chan error
-}
-
-// A Dispatcher dispatches tasks to workers.
+// A Dispatcher dispatches tasks.
 type Dispatcher struct {
-	pool    chan *worker
-	queue   chan *task
-	workers []*worker
-	wg      sync.WaitGroup
-	quit    chan struct{}
+	count int // count of workers
+	size  int // size of task queue
+
+	cancel    func()
+	wgWorkers sync.WaitGroup
+
+	queue chan Tasker
+	wg    sync.WaitGroup
+
+	errOnce sync.Once
+	err     error
 }
 
-// New creates and initializes a new Dispatcher.
-// The Dispatcher has count Workers and size queue.
-func New(count, size int) *Dispatcher {
-	return newDispatcher(count, size)
-}
+// Start creates a new Dispatcher and starts to dispatch tasks to workers.
+func Start(ctx context.Context, opts ...Option) *Dispatcher {
+	ctx, cancel := context.WithCancel(ctx)
 
-// NewDefault creates and initializes a new Dispatcher
-// with DefaultWorkerCount and DefaultQueueSize.
-func NewDefault() *Dispatcher {
-	return newDispatcher(DefaultWorkerCount, DefaultQueueSize)
-}
-
-func newDispatcher(count, size int) *Dispatcher {
 	d := &Dispatcher{
-		pool:  make(chan *worker, count),
-		queue: make(chan *task, size),
-		quit:  make(chan struct{}),
+		count:  DefaultWorkerCount,
+		size:   DefaultQueueSize,
+		cancel: cancel,
 	}
 
-	d.workers = make([]*worker, cap(d.pool))
-	for i := 0; i < len(d.workers); i++ {
-		d.workers[i] = &worker{
-			dispatcher: d,
-			task:       make(chan *task),
-			quit:       make(chan struct{}),
-		}
+	for _, opt := range opts {
+		opt.apply(d)
+	}
+
+	d.queue = make(chan Tasker, d.size)
+
+	for i := 0; i < d.count; i++ {
+		d.wgWorkers.Add(1)
+		go d.worker(ctx)
 	}
 
 	return d
 }
 
-// Start starts to dispatch tasks.
-func (d *Dispatcher) Start() {
-	for _, w := range d.workers {
-		w.start()
-	}
+func (d *Dispatcher) worker(ctx context.Context) {
+	defer d.wgWorkers.Done()
 
-	go func() {
-		for {
-			select {
-			case t := <-d.queue:
-				(<-d.pool).task <- t
-			case <-d.quit:
-				return
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case t := <-d.queue:
+			if err := t.Run(ctx); err != nil {
+				d.errOnce.Do(func() {
+					d.err = err
+					d.cancel()
+				})
 			}
+			d.wg.Done()
 		}
-	}()
-}
-
-// Enqueue enqueues a new task to the dispatcher.
-func (d *Dispatcher) Enqueue(ctx context.Context, t Tasker) <-chan error {
-	d.wg.Add(1)
-
-	ch := make(chan error)
-
-	d.queue <- &task{
-		ctx:    ctx,
-		tasker: t,
-		ch:     ch,
 	}
-
-	return ch
 }
 
-// Wait waits until all tasks are completed.
-func (d *Dispatcher) Wait() {
+func (d *Dispatcher) Wait() error {
 	d.wg.Wait()
+
+	d.cancel()
+	d.wgWorkers.Wait()
+
+	return d.err
 }
 
-type worker struct {
-	dispatcher *Dispatcher
-	task       chan *task
-	quit       chan struct{}
-}
-
-func (w *worker) start() {
-	go func() {
-		for {
-			w.dispatcher.pool <- w
-
-			select {
-			case t := <-w.task:
-				ch := make(chan error)
-
-				go func() {
-					ch <- t.tasker.Run(t.ctx)
-				}()
-
-				select {
-				case err := <-ch:
-					t.ch <- err
-				case <-t.ctx.Done():
-					t.ch <- t.ctx.Err()
-				}
-
-				w.dispatcher.wg.Done()
-			}
-		}
-	}()
+// Add adds a new task to the dispatcher.
+func (d *Dispatcher) Add(t Tasker) {
+	d.wg.Add(1)
+	d.queue <- t
 }
 
 // Tasker is the interface that wraps the Run method.

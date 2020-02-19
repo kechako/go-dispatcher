@@ -1,0 +1,44 @@
+= go-dispatcher
+
+go-dispatcher is a task dispatcher for Go.
+
+== Usage
+
+[source, go]
+----
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/kechako/go-dispatcher"
+)
+
+type Task struct {
+	name string
+}
+
+func (t *Task) Run(ctx context.Context) error {
+	fmt.Println(t.name, "is running...")
+	// Do something
+	time.Sleep(1 * time.Second)
+	return nil
+}
+
+func main() {
+	d := dispatcher.Start(context.Background(), dispatcher.WithWorkerCount(10), dispatcher.WithQueueSize(100))
+
+	for i := 0; i < 100; i++ {
+		d.Add(&Task{
+			name: fmt.Sprintf("task #%d", i+1),
+		})
+	}
+
+	if err := d.Wait(); err != nil {
+		log.Fatal(err)
+	}
+}
+----

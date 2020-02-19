@@ -2,210 +2,118 @@ package dispatcher
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
 
-var (
-	workerCount = 2
-	queueSize   = 10
-)
+func Test_Dispatcher(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-func TestNew(t *testing.T) {
-
-	d := New(workerCount, queueSize)
+	d := Start(ctx)
 
 	if d == nil {
-		t.Fatal("New returned nil")
+		t.Fatal("New() should not return nil")
 	}
 
-	if d.pool == nil {
-		t.Fatal("Worker pool is not initialized.")
+	if d.count != DefaultWorkerCount {
+		t.Errorf("Dispatcher.count must be DefaultWorkerCount (got %d, want %d)", d.count, DefaultWorkerCount)
 	}
-	if d.queue == nil {
-		t.Fatal("Tasker queue is not initialized.")
-	}
-	if d.quit == nil {
-		t.Fatal("Quit channel is not initialized.")
-	}
-	if d.workers == nil {
-		t.Fatal("Workers not initialized.")
+	if d.size != DefaultQueueSize {
+		t.Errorf("Dispatcher.size must be DefaultQueueSize (got %d, want %d)", d.size, DefaultQueueSize)
 	}
 
-	poolCap := cap(d.pool)
-	if poolCap != workerCount {
-		t.Fatalf("want %v\ngot %v", workerCount, poolCap)
-	}
-
-	queueCap := cap(d.queue)
-	if queueCap != queueSize {
-		t.Fatalf("want %v\ngot %v", queueSize, queueCap)
-	}
-
-	workerCnt := len(d.workers)
-	if workerCnt != workerCount {
-		t.Fatalf("want %v\ngot %v", workerCount, workerCnt)
-	}
-
-	for i, w := range d.workers {
-		if w == nil {
-			t.Fatal("%d : Worker is nil.", i)
-		}
-
-		if w.dispatcher != d {
-			t.Errorf("%d : Invalid dispatcher.", i)
-		}
-
-		if w.quit == nil {
-			t.Errorf("%d : Quit channel is not initialized.", i)
-		}
-
-		if w.task == nil {
-			t.Errorf("%d : Tasker channel is not initialized.", i)
-		}
+	if cap(d.queue) != d.size {
+		t.Error("size of Dispatcher.queue is not valid")
 	}
 }
 
-func TestNewDefault(t *testing.T) {
-	d := NewDefault()
+func Test_DispatcherWithOptions(t *testing.T) {
+	var (
+		count = DefaultWorkerCount * 2
+		size  = DefaultQueueSize * 2
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	d := Start(ctx, WithWorkerCount(count), WithQueueSize(size))
 
 	if d == nil {
-		t.Fatal("New returned nil")
-	}
-	if d.pool == nil {
-		t.Fatal("Worker pool is not initialized.")
-	}
-	if d.queue == nil {
-		t.Fatal("Tasker queue is not initialized.")
-	}
-	if d.quit == nil {
-		t.Fatal("Quit channel is not initialized.")
-	}
-	if d.workers == nil {
-		t.Fatal("Workers not initialized.")
+		t.Fatal("New() should not return nil")
 	}
 
-	poolCap := cap(d.pool)
-	if poolCap != DefaultWorkerCount {
-		t.Fatalf("want %v\ngot %v", DefaultWorkerCount, poolCap)
+	if d.count != count {
+		t.Errorf("Dispatcher.count is %d, want %d", d.count, count)
+	}
+	if d.size != size {
+		t.Errorf("Dispatcher.size is %d, want %d", d.size, size)
 	}
 
-	queueCap := cap(d.queue)
-	if queueCap != DefaultQueueSize {
-		t.Fatalf("want %v\ngot %v", DefaultQueueSize, queueCap)
-	}
-
-	workerCnt := len(d.workers)
-	if workerCnt != DefaultWorkerCount {
-		t.Fatalf("want %v\ngot %v", DefaultWorkerCount, workerCnt)
-	}
-
-	for i, w := range d.workers {
-		if w == nil {
-			t.Fatal("%d : Worker is nil.", i)
-		}
-
-		if w.dispatcher != d {
-			t.Errorf("%d : Invalid dispatcher.", i)
-		}
-
-		if w.quit == nil {
-			t.Errorf("%d : Quit channel is not initialized.", i)
-		}
-
-		if w.task == nil {
-			t.Errorf("%d : Tasker channel is not initialized.", i)
-		}
+	if cap(d.queue) != d.size {
+		t.Error("size of Dispatcher.queue is not valid")
 	}
 }
 
-var errTestTasker = errors.New("test tasker error")
-
-type testTasker struct {
-	done bool
-	ch   <-chan error
+type Waiter interface {
+	Wait() error
 }
 
-func (t *testTasker) Run(ctx context.Context) error {
-	t.done = true
-
-	return errTestTasker
-}
-
-func TestDispatcher(t *testing.T) {
-	d := New(workerCount, queueSize)
-
-	ctx := context.Background()
-
-	tasks := make([]*testTasker, queueSize)
-	for i := 0; i < len(tasks); i++ {
-		task := &testTasker{done: false}
-		task.ch = d.Enqueue(ctx, task)
-		tasks[i] = task
-	}
-
-	quit := make(chan struct{})
-
-	d.Start()
+func WaitWithTimeout(ctx context.Context, w Waiter, timeout time.Duration) error {
+	c := make(chan struct{})
 
 	go func() {
-		for i, task := range tasks {
-			err := <-task.ch
-			if err == nil || err != errTestTasker {
-				t.Errorf("Tasker.Run %d method returns invalid error %#v.", i, err)
-			}
-
-			if !task.done {
-				t.Errorf("Tasker %d has never run.", i)
-			}
-		}
-		close(quit)
+		defer close(c)
+		w.Wait()
 	}()
 
-	d.Wait()
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
-	<-quit
-}
-
-var (
-	taskTime    = 5 * time.Second
-	taskTimeout = 10 * time.Millisecond
-)
-
-type cancelTask struct{}
-
-func (t *cancelTask) Run(ctx context.Context) error {
 	select {
-	case <-time.After(taskTime):
-		return nil
+	case <-c:
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+
+	return nil
 }
 
-func TestCancel(t *testing.T) {
-	d := New(workerCount, queueSize)
+type TestTask struct {
+	name string
+	done bool
+}
 
-	ctx, cancel := context.WithTimeout(context.Background(), taskTimeout)
-	defer cancel()
+func (t *TestTask) Run(ctx context.Context) error {
+	t.done = true
 
-	task := &cancelTask{}
-	ch := d.Enqueue(ctx, task)
+	return nil
+}
 
-	quit := make(chan struct{})
+func Test_DispatcherStart(t *testing.T) {
+	ctx := context.Background()
+	d := Start(ctx, WithWorkerCount(2), WithQueueSize(10))
 
-	d.Start()
+	if d == nil {
+		t.Fatal("New() should not return nil")
+	}
 
-	go func() {
-		err := <-ch
-		if err != context.DeadlineExceeded {
-			t.Error("task was not canceled")
+	var tasks []*TestTask
+	for i := 0; i < 10; i++ {
+		name := fmt.Sprintf("task %d", i)
+		task := &TestTask{name: name}
+		tasks = append(tasks, task)
+		d.Add(task)
+	}
+
+	if err := WaitWithTimeout(ctx, d, 5*time.Second); err != nil {
+		t.Error("Running tasks is timeout")
+	}
+
+	for _, task := range tasks {
+		if !task.done {
+			t.Errorf("%s is not done", task.name)
 		}
-		close(quit)
-	}()
-
-	d.Wait()
-
-	<-quit
+	}
 }
